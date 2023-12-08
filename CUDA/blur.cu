@@ -5,6 +5,8 @@
 **/
 
 #include <stdio.h>
+#include <time.h>
+
 //number of channels i.e. R G B
 #define CHANNELS 3
 #define BLUR_SIZE 4
@@ -12,8 +14,40 @@
 unsigned char* loadPPM(const char* path, int* width, int* height);
 void writePPM(const char* path, unsigned char* img, int width, int height);
 
-__global__ 	void kernel_blur(unsigned char* d_rgb_image,unsigned char*d_blur_image,
-                        int rows,int cols,int bsize) 
+void serial_blur(unsigned char* d_rgb_image,unsigned char*d_blur_image, int rows,int cols,int bsize)  {
+	for(int i = 0; i < rows; i++) {
+		for(int j = 0; j < cols; j++) {
+			unsigned int red  =0;
+		    unsigned int green=0;
+		    unsigned int blue =0;
+		    int num=0; 
+		    int curr_i, curr_j;
+			for (int m = -bsize; m <= bsize; m++) {
+				for (int n = -bsize; n <= bsize; n++) {
+					curr_i = i + m;
+					curr_j = j + n;
+					if((curr_i<0)||(curr_i>rows-1)||(curr_j<0)||(curr_j>cols-1)) continue; 
+					red   += d_rgb_image[(3*(curr_j+curr_i*cols))];
+					green += d_rgb_image[(3*(curr_j+curr_i*cols))+1];
+					blue  += d_rgb_image[(3*(curr_j+curr_i*cols))+2];
+					num++;
+				}
+			}
+
+			red /= num;
+			green /= num;
+			blue /= num;
+
+
+			d_blur_image[3*(j+i*cols)]	=red;
+		    d_blur_image[3*(j+i*cols)+1]=green;
+		    d_blur_image[3*(j+i*cols)+2]=blue;
+
+		}
+	}
+}
+
+__global__ 	void kernel_blur(unsigned char* d_rgb_image,unsigned char*d_blur_image, int rows,int cols,int bsize) 
 {
 	int c = threadIdx.x+blockIdx.x*blockDim.x;
 	int r = threadIdx.y+blockIdx.y*blockDim.y;
@@ -52,7 +86,7 @@ __global__ 	void kernel_blur(unsigned char* d_rgb_image,unsigned char*d_blur_ima
 }
 
 int main(int argc, char **argv) 
-{
+{	
 	char* input_file;
 	char* output_file;
     int bsize=4;
@@ -72,6 +106,12 @@ int main(int argc, char **argv)
 			printf("Usage: <executable> input_file output_file bsize\n");
 			exit(1);
 	}
+
+
+
+	clock_t start, end;
+	double cpu_time_used;		
+
 	
 	unsigned char *h_rgb_image; //store image's rbg data
 	unsigned char *d_rgb_image; //array for storing rgb data on device
@@ -82,30 +122,86 @@ int main(int argc, char **argv)
 	//load image into an array and retrieve number of pixels
 	h_rgb_image = loadPPM(input_file, &cols, &rows); 
 
+	if (h_rgb_image == NULL) return -1;
+
 	int total_pixels=rows*cols;
+
+
 	//allocate memory of host's blur image data array
 	h_blur_image = (unsigned char *)malloc(sizeof(unsigned char*) * total_pixels * CHANNELS);
 
-    
 
-	/* ADD YOUR CODE HERE */
-	//memcpy(h_blur_image,h_rgb_image,total_pixels*CHANNELS);
-	cudaMalloc(&d_rgb_image,total_pixels*CHANNELS*8);
-	cudaMalloc(&d_blur_image,total_pixels*CHANNELS*8);
-	
-	cudaMemcpy(d_rgb_image,h_rgb_image,total_pixels*CHANNELS*8,cudaMemcpyHostToDevice);
-    dim3 BlockSize(16,16,1);
-	dim3 GridSize((cols/16)+1,(rows/16)+1,1);
-    	
-	kernel_blur<<<GridSize,BlockSize>>>(d_rgb_image,d_blur_image,rows,cols,bsize);
-    cudaMemcpy(h_blur_image,d_blur_image,total_pixels*CHANNELS*8,cudaMemcpyDeviceToHost);
-	
-	/* END OF YOUR CODE */
+	// Start of Serial part
+	//
+	//
+	//
+	start = clock();
+	serial_blur(h_rgb_image, h_blur_image, rows, cols, bsize);
+	end = clock();
+
+	cpu_time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
+	printf("Seriale ha impiegato %lf secondi\n", cpu_time_used);
 
 	//output the blurred image
-    writePPM(output_file, h_blur_image, cols, rows);
+	char* tmp = (char*) malloc(strlen(output_file) * sizeof(char));
+	strcpy(tmp, output_file);
+    writePPM(strcat(tmp,"_serial.ppm"), h_blur_image, cols, rows);
+
+
+	
+
+
+
+
+	// Start of CUDA part
+	//
+	//
+	//
+	cudaEvent_t cudaStart, cudaStop;
+	cudaEventCreate(&cudaStart);
+	cudaEventCreate(&cudaStop);
+
+    dim3 BlockSize(16,16,1);
+	dim3 GridSize((cols/16)+1,(rows/16)+1,1);
+
+	cudaMalloc(&d_rgb_image,total_pixels*CHANNELS*8);
+	cudaMemcpy(d_rgb_image,h_rgb_image,total_pixels*CHANNELS*8,cudaMemcpyHostToDevice);
+
+	cudaMalloc(&d_blur_image,total_pixels*CHANNELS*8);
+    
+
+	start = clock();
+
+	cudaEventRecord(cudaStart);
+	kernel_blur<<<GridSize,BlockSize>>>(d_rgb_image,d_blur_image,rows,cols,bsize);
+	cudaEventRecord(cudaStop);
+
+	end = clock();
+
+
+    cudaMemcpy(h_blur_image,d_blur_image,total_pixels*CHANNELS*8,cudaMemcpyDeviceToHost);
+	
+    cudaEventSynchronize(cudaStop);
+
+    float milliseconds = 0;
+	cudaEventElapsedTime(&milliseconds, cudaStart, cudaStop);
+
+	cpu_time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
+	printf("CUDA ha impiegato %f o %lf secondi\n", milliseconds, cpu_time_used);
+
+	// Free space
 	cudaFree(d_rgb_image);
 	cudaFree(d_blur_image);
+	
+	//output the blurred image
+    writePPM(strcat(output_file,"_cuda.ppm"), h_blur_image, cols, rows);
+
+
+
+
+
+
+
 	return 0;
 }
 
