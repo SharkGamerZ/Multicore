@@ -1,14 +1,20 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/time.h>
 
 #define TILE_WIDTH 16
+#define SERIAL_OUT "mat_serial"
+#define NORMAL_OUT "mat_normal"
+#define SHARED_OUT "mat_shared"
 
+
+void serialMatrixMul(float* M, float* N, float* P, int Width) ;
 __global__ void MatrixMulKernel(float* M, float* N, float* P, int Width);
 __global__ void sharedMatrixMulKernel(float* M, float* N, float* P, int Width);
 
 void initMat(float* M, int n, int init);
 void printMat(float* M, int n);
-void writeMat(float* M, int n);
+void writeMat(char* output, float* M, int n);
 
 
 int main(int argc, char** argv) {
@@ -28,18 +34,62 @@ int main(int argc, char** argv) {
 			exit(1);
 	}
 
+
+	// Start of Serial part
+	//
+	//
+	//
+
+	// Allocating matrixes
+	float *M = (float*)malloc((n*n)*sizeof(float));
+	float *N = (float*)malloc((n*n)*sizeof(float));
+	float *P = (float*)malloc((n*n)*sizeof(float));;
+
+	// Initializing matrixes
+	initMat(M, n, init);
+	initMat(N, n, init);
+
+	clock_t start, end;
+	double cpu_time_used;	
+
+	start = clock();
+	serialMatrixMul(M, N, P, n);
+	end = clock();
+
+	cpu_time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
+	printf("La versione seriale ha impiegato %lf\n", cpu_time_used);
+
+	//writeMat(SERIAL_OUT,P, n);
+
+
+
+
+	// Start of CUDA code
+	//
+	//
+	//
+
+	// Setting up variables for measuring time
+	cudaEvent_t cudaStart, cudaStop;
+	cudaEventCreate(&cudaStart);
+	cudaEventCreate(&cudaStop);
+	float milliseconds;
+
+	// Number of threads and blocks
 	dim3 BlockSize(16,16,1);
-	dim3 GridSize((n/16),(n/16),1);
+	dim3 GridSize((n+15)/16,(n+15)/16,1);
 
-
+	// Allocating host matrixes
 	float *h_M = (float*)malloc((n*n)*sizeof(float));
 	float *h_N = (float*)malloc((n*n)*sizeof(float));
 	float *h_P = (float*)malloc((n*n)*sizeof(float));;
 
+	// Initializing matrixes
 	initMat(h_M, n, init);
 	initMat(h_N, n, init);
 
 
+	// Allocating and copying matrixes to device
 	float *d_M;
 	float *d_N;
 	float *d_P;
@@ -52,14 +102,64 @@ int main(int argc, char** argv) {
 	cudaMalloc(&d_P, (n*n)*sizeof(float));
 
 
-	MatrixMulKernel<<<GridSize,BlockSize>>>(d_M, d_N, d_P, n);
 
+
+	// Cuda Normal 
+	//
+	//
+	cudaEventRecord(cudaStart);
+	MatrixMulKernel<<<GridSize,BlockSize>>>(d_M, d_N, d_P, n);
+	cudaEventRecord(cudaStop);
+
+	cudaMemcpy(h_P, d_P, (n*n)*sizeof(float), cudaMemcpyDeviceToHost);
+    
+	// Timing
+    cudaEventSynchronize(cudaStop);
+    milliseconds = 0;
+	cudaEventElapsedTime(&milliseconds, cudaStart, cudaStop);
+	printf("La versione normale ha impiegato %f \n", milliseconds);
+
+	//writeMat(NORMAL_OUT,h_P, n);
+
+
+
+
+
+	// Cuda Shared 
+	//
+	//
+	cudaEventRecord(cudaStart);
+	sharedMatrixMulKernel<<<GridSize,BlockSize>>>(d_M, d_N, d_P, n);
+	cudaEventRecord(cudaStop);
 
 	cudaMemcpy(h_P, d_P, (n*n)*sizeof(float), cudaMemcpyDeviceToHost);
 
-	writeMat(h_P, n);
+	// Timing
+	cudaEventSynchronize(cudaStop);
+	milliseconds = 0;
+	cudaEventElapsedTime(&milliseconds, cudaStart, cudaStop);
+	printf("La versione shared ha impiegato %f \n", milliseconds);
+	
+
+	//writeMat(SHARED_OUT,h_P, n);
 }
 
+
+
+/* Funzioni */
+
+void serialMatrixMul(float* M, float* N, float* P, int Width) 
+{
+	for(int i = 0; i < Width; i++) {
+		for (int j = 0; j < Width; j++) {
+
+			P[j + i*Width] = 0;
+			for(int k = 0; k < Width; k++) {
+				P[j + i * Width] += M[k + i*Width]*N[j + k*Width];
+			}
+		}
+	}
+}
 
 __global__ void MatrixMulKernel(float* M, float* N, float* P, int Width) 
 {
@@ -119,16 +219,21 @@ void printMat(float* M, int n) {
 }
 
 
-void writeMat(float* M, int n) {
-    FILE* file = fopen("result_matrix.txt", "wb");
+void writeMat(char* output, float* M, int n) {
+    FILE* file = fopen(output, "wb");
 
     if (!file) {
         fprintf(stderr, "Failed to open file\n");
         return;
     }
 
+    for (int i = 0; i < n; i++) {
+    	for (int j = 0; j < n; j++) {
+    		fprintf(file, "%g ",M[i*n + j]);
+    	}
+    	fprintf(file,"\n");
+    }
 
-    fwrite(M, sizeof(float), n*n, file);
 
     fclose(file);
 }

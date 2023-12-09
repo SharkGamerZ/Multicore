@@ -1,5 +1,5 @@
 #include <stdio.h>
-#include <time.h>
+#include <sys/time.h>
 
 //number of channels i.e. R G B
 #define CHANNELS 3
@@ -40,8 +40,7 @@ void serial_blur(unsigned char* rgb_image,unsigned char*blur_image, int rows, in
 	}
 }
 
-__global__ 	void kernel_blur(unsigned char* d_rgb_image,unsigned char*d_blur_image, int rows,int cols,int bsize) 
-{
+__global__ 	void kernel_blur(unsigned char* d_rgb_image,unsigned char*d_blur_image, int rows,int cols,int bsize) {
 	int c = threadIdx.x+blockIdx.x*blockDim.x;
 	int r = threadIdx.y+blockIdx.y*blockDim.y;
 	
@@ -103,9 +102,6 @@ int main(int argc, char **argv)
 
 
 
-	clock_t start, end;
-	double cpu_time_used;		
-
 	
 	int rows; //number of rows of pixels
 	int cols; //number of columns of pixels
@@ -117,6 +113,10 @@ int main(int argc, char **argv)
 	//
 	//
 	//
+	clock_t start, end;
+	double cpu_time_used;		
+
+
 	unsigned char *s_rgb_image; //store image's rbg data
 	unsigned char *s_blur_image; //array for storing rgb data on device
 
@@ -164,7 +164,7 @@ int main(int argc, char **argv)
 	unsigned char *d_rgb_image; //array for storing rgb data on device
 	unsigned char *h_blur_image, *d_blur_image; //host and device's blur image data array pointers
 
-	h_rgb_image = loadPPM(input_file, &cols, &rows); 
+	h_rgb_image = loadPPM(input_file, &cols, &rows);
 
 	if (h_rgb_image == NULL) return -1;
 
@@ -175,20 +175,20 @@ int main(int argc, char **argv)
 	cudaMemcpy(d_rgb_image,h_rgb_image,total_pixels*CHANNELS*8,cudaMemcpyHostToDevice);
 
 	cudaMalloc(&d_blur_image,total_pixels*CHANNELS*8);
-    
 
-	start = clock();
 
 	cudaEventRecord(cudaStart);
 	kernel_blur<<<GridSize,BlockSize>>>(d_rgb_image,d_blur_image,rows,cols,bsize);
-	cudaEventRecord(cudaStop);
-
-	end = clock();
-
+	
+	
 
     cudaMemcpy(h_blur_image,d_blur_image,total_pixels*CHANNELS*8,cudaMemcpyDeviceToHost);
 	
-    cudaEventSynchronize(cudaStop);
+    cudaDeviceSynchronize();
+    cudaEventRecord(cudaStop);
+    
+	cudaEventSynchronize(cudaStop);
+    	
 
     float milliseconds = 0;
 	cudaEventElapsedTime(&milliseconds, cudaStart, cudaStop);
