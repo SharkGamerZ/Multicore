@@ -7,8 +7,8 @@
 
 
 void serialBlur(unsigned char* rgb_image,unsigned char*blur_image, int rows, int cols, int bsize);
-__global__ 	void kernelBlur(unsigned char* d_rgb_image,unsigned char*d_blur_image, int rows,int cols,int bsize);
-__global__ 	void sharedKernelBlur(unsigned char* d_rgb_image,unsigned char*d_blur_image, int rows,int cols,int bsize);
+__global__ void kernelBlur(unsigned char* d_rgb_image,unsigned char*d_blur_image, int rows,int cols,int bsize);
+__global__ void sharedKernelBlur(unsigned char* d_rgb_image,unsigned char*d_blur_image, int rows,int cols,int bsize);
 
 
 unsigned char* loadPPM(const char* path, int* width, int* height);
@@ -31,7 +31,6 @@ int main(int argc, char **argv)
 		case 3:
 			input_file = argv[1];
 			output_file = argv[2];
-			bsize = 4;
             break;
 		default:
 			printf("Usage: <executable> input_file output_file bsize\n");
@@ -85,9 +84,6 @@ int main(int argc, char **argv)
     free(tmp);
 
 
-
-
-
 	// Start of CUDA part
 	//
 	//
@@ -95,18 +91,6 @@ int main(int argc, char **argv)
 	cudaEventCreate(&cudaStart);
 	cudaEventCreate(&cudaStop);
 
-
-// 
-// 
-// 
-// 
-// 
-//    AGGIUSTARE NON FUNZIONA 
-//      inserire bestemmia
-// 
-// 
-// 
-// 
 
     dim3 BlockSize(16,16,1);
 	dim3 GridSize((cols/16)+1,(rows/16)+1,1);
@@ -278,27 +262,40 @@ __global__ 	void sharedKernelBlur(unsigned char* d_rgb_image,unsigned char*d_blu
 
 	if(g_c >= cols || g_r >= rows) return;
 
-    unsigned int red  =0;
-    unsigned int green=0;
-    unsigned int blue =0;
+    unsigned int red  	=	0;
+    unsigned int green	=	0;
+    unsigned int blue 	=	0;
     int num=0; 
 
     ds_rgb_image[3*(ty*blockDim.x + tx)] 		= d_rgb_image[(3*(g_c + g_r*cols))];
     ds_rgb_image[3*(ty*blockDim.x + tx) + 1] 	= d_rgb_image[(3*(g_c + g_r*cols)) + 1];
     ds_rgb_image[3*(ty*blockDim.x + tx) + 2] 	= d_rgb_image[(3*(g_c + g_r*cols)) + 2];
 
+    __syncthreads();
 
+    int curr_c;
+	int curr_r;
 
     
-	for (int i = -bsize; i <= bsize; i++)
+	for (int i = -bsize; i <= bsize; i++) {
 		for (int j = -bsize; j <= bsize; j++) {
-			//if((r + j<0)||(r + j>rows-1)||(g_c + i<0)||(g_c + i>cols-1)) continue; 
-			if((ty+j) < 0 || (ty+j) >= blockDim.y || (tx+i) < 0 || (tx+i) >= blockDim.x) continue;
-			red   += ds_rgb_image[3*((ty + j)*blockDim.x + (tx + i))];
-			green += ds_rgb_image[3*((ty + j)*blockDim.x + (tx + i)) + 1];
-			blue  += ds_rgb_image[3*((ty + j)*blockDim.x + (tx + i)) + 2];
-			num++;
+			curr_c = g_c + i;
+			curr_r = g_r + j;
+			if((ty+j) < 0 || (ty+j) >= blockDim.y || (tx+i) < 0 || (tx+i) >= blockDim.x) {
+				if((curr_r + j<0)||(curr_r + j>rows-1)||(curr_c + i<0)||(curr_c + i>cols-1)) continue;
+				red   += d_rgb_image[(3*(curr_c + curr_r*cols))];
+				green += d_rgb_image[(3*(curr_c + curr_r*cols)) + 1];
+				blue  += d_rgb_image[(3*(curr_c + curr_r*cols)) + 2];
 			}
+			else{
+				red   += ds_rgb_image[3*((ty + j)*blockDim.x + (tx + i))    ];
+				green += ds_rgb_image[3*((ty + j)*blockDim.x + (tx + i)) + 1];
+				blue  += ds_rgb_image[3*((ty + j)*blockDim.x + (tx + i)) + 2];
+			}
+
+			num++;
+		}
+	}
 	red /= num;
 	green /= num;
 	blue /= num;
