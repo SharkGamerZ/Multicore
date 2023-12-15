@@ -9,6 +9,11 @@ void* Hello (void* rank);
 
 int main(int argc, char const *argv[])
 {
+	if (argc != 2) {
+		fprintf(stderr, "Usage: <executable> num_of_threads\n");
+		exit(0);
+	}
+
 	long thread;
 	pthread_t* thread_handles;
 

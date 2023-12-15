@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <unistd.h>
 #include <sys/time.h>
 
 //number of channels i.e. R G B
@@ -6,7 +7,7 @@
 #define TILE_WIDTH 16
 
 
-__global__ 	void kernelGrayScale(unsigned char* d_rgb_image,unsigned char*d_blur_image, int rows,int cols,int bsize);
+__global__ 	void kernelGrayScale(unsigned char* d_rgb_image,unsigned char*d_blur_image, int rows,int cols,int grayLevel);
 
 
 unsigned char* loadPPM(const char* path, int* width, int* height);
@@ -16,7 +17,7 @@ int main(int argc, char **argv)
 {	
 	char* input_file;
 	char* output_file;
-    int grayLevel = 4;
+    int grayLevel = 0;
 
 	// Check for the input file and output file names
 	switch(argc) {
@@ -30,10 +31,14 @@ int main(int argc, char **argv)
 			output_file = argv[2];
             break;
 		default:
-			printf("Usage: <executable> input_file output_file grayLevel\n");
+			fprintf(stderr, "Usage: <executable> input_file output_file grayLevel\n");
 			exit(1);
 	}
 
+	if(grayLevel < 0 || grayLevel > 7 ) {
+		fprintf(stderr, "grayLevel must be between 1 and 7\n");
+		exit(1);
+	}
 
 
 	// Image dimensions
@@ -101,7 +106,7 @@ int main(int argc, char **argv)
 }
 
 
-__global__ 	void kernelGrayScale(unsigned char* d_rgb_image,unsigned char*d_gray_image, int rows,int cols,int bsize)
+__global__ 	void kernelGrayScale(unsigned char* d_rgb_image,unsigned char*d_gray_image, int rows, int cols, int grayLevel)
 {
 	int c = threadIdx.x+blockIdx.x*blockDim.x;
 	int r = threadIdx.y+blockIdx.y*blockDim.y;
@@ -112,9 +117,6 @@ __global__ 	void kernelGrayScale(unsigned char* d_rgb_image,unsigned char*d_gray
 	float G_Weight = 0.7152;
 	float B_Weight = 0.0722;
 
-    unsigned int red  =0;
-    unsigned int green=0;
-    unsigned int blue =0;
     int value = 0; 
 
 
@@ -122,7 +124,21 @@ __global__ 	void kernelGrayScale(unsigned char* d_rgb_image,unsigned char*d_gray
 	value += d_rgb_image[(3*(c+r*cols))+1]* G_Weight;
 	value += d_rgb_image[(3*(c+r*cols))+2]* B_Weight;
 
-	//value /= 3;
+
+	if (c == 200 && r == 0) printf("value = %u\n", value);
+
+	value = value >> grayLevel;
+
+	if (c == 200 && r == 0) printf("value >> %d = %u\n", grayLevel, value);
+
+	// value = ( (value << grayLevel) | ((1 << grayLevel)-1));
+
+	value = (value << grayLevel) *2 - 1;
+
+	if (c == 200 && r == 0) printf("value << %d = %u\n", grayLevel, value);
+
+
+	// value = (int) ((value * 1.0) / (((1 << 8) - 1) * 1.0) * (((1 << grayLevel) - 1)*1.0) + 0.5);
 
 	d_gray_image[(3*(c+r*cols))] = value;
 	d_gray_image[(3*(c+r*cols))+1] = value;

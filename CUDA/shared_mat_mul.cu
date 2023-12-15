@@ -8,8 +8,10 @@
 #define SHARED_OUT "mat_shared"
 
 
-void serialMatrixMul(float* M, float* N, float* P, int Width) ;
+void serialMatrixMul(float* M, float* N, float* P, int Width);
+void serialMatrixMul2(float* M, float* N, float* P, int Width);
 __global__ void MatrixMulKernel(float* M, float* N, float* P, int Width);
+__global__ void MatrixMulKernel2(float* M, float* N, float* P, int Width);
 __global__ void sharedMatrixMulKernel(float* M, float* N, float* P, int Width);
 
 void initMat(float* M, int n, int init);
@@ -34,7 +36,8 @@ int main(int argc, char** argv) {
 			exit(1);
 	}
 
-
+	
+	/*
 	// Start of Serial part
 	//
 	//
@@ -53,15 +56,14 @@ int main(int argc, char** argv) {
 	double cpu_time_used;	
 
 	start = clock();
-	serialMatrixMul(M, N, P, n);
+	serialMatrixMul2(M, N, P, n);
 	end = clock();
 
 	cpu_time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
-	printf("La versione seriale ha impiegato %lf\n", cpu_time_used);
+	printf("La versione seriale ha impiegato %lf\n", cpu_time_used*1000);
 
 	//writeMat(SERIAL_OUT,P, n);
-
-
+	*/
 
 
 	// Start of CUDA code
@@ -123,6 +125,28 @@ int main(int argc, char** argv) {
 
 
 
+
+	// Cuda a little better 
+	//
+	//
+	cudaEventRecord(cudaStart);
+	MatrixMulKernel2<<<GridSize,BlockSize>>>(d_M, d_N, d_P, n);
+	cudaEventRecord(cudaStop);
+
+	cudaMemcpy(h_P, d_P, (n*n)*sizeof(float), cudaMemcpyDeviceToHost);
+    
+	// Timing
+    cudaEventSynchronize(cudaStop);
+    milliseconds = 0;
+	cudaEventElapsedTime(&milliseconds, cudaStart, cudaStop);
+	printf("La versione normale v2 ha impiegato %f \n", milliseconds);
+
+	//writeMat(NORMAL_OUT,h_P, n);
+
+
+
+
+
 	// Cuda Shared 
 	//
 	//
@@ -159,6 +183,20 @@ void serialMatrixMul(float* M, float* N, float* P, int Width)
 	}
 }
 
+void serialMatrixMul2(float* M, float* N, float* P, int Width) 
+{
+	for(int i = 0; i < Width; i++) {
+		for (int j = 0; j < Width; j++) {
+
+			float Pvalue = 0;
+			for(int k = 0; k < Width; k++) {
+				Pvalue += M[k + i*Width]*N[j + k*Width];
+			}
+			P[j + i*Width] = Pvalue;
+		}
+	}
+}
+
 __global__ void MatrixMulKernel(float* M, float* N, float* P, int Width) 
 {
 	int c = threadIdx.x+blockIdx.x*blockDim.x;
@@ -171,6 +209,22 @@ __global__ void MatrixMulKernel(float* M, float* N, float* P, int Width)
 	for(int i = 0; i < Width; i++) {
 		P[c + r * Width] += M[i + r*Width]*N[c + i*Width];
 	}
+}
+
+__global__ void MatrixMulKernel2(float* M, float* N, float* P, int Width) 
+{
+	int c = threadIdx.x+blockIdx.x*blockDim.x;
+	int r = threadIdx.y+blockIdx.y*blockDim.y;
+	
+	if(c >= Width || r >= Width) return;
+	
+	float Pvalue = 0;
+
+	for(int i = 0; i < Width; i++) {
+		Pvalue += M[i + r*Width]*N[c + i*Width];
+	}
+
+	P[c + r * Width] = Pvalue;
 }
 
 __global__ void sharedMatrixMulKernel(float* M, float* N, float* P, int Width)
@@ -199,7 +253,8 @@ __global__ void sharedMatrixMulKernel(float* M, float* N, float* P, int Width)
 	P[Row*Width+Col] = Pvalue;
 }
 
-void initMat(float* M, int n, int init) {
+void initMat(float* M, int n, int init)
+{
 	for(int i = 0; i < n; i++) {
 		for (int j = 0; j < n; j++){
 			M[i*n+j] = init;
@@ -207,7 +262,8 @@ void initMat(float* M, int n, int init) {
 	}
 }
 
-void printMat(float* M, int n) {
+void printMat(float* M, int n)
+{
 	for(int i = 0; i < n; i++) {
 		for (int j = 0; j < n; j++){
 			printf("%g ",M[i*n+j]);
@@ -217,7 +273,8 @@ void printMat(float* M, int n) {
 }
 
 
-void writeMat(char* output, float* M, int n) {
+void writeMat(char* output, float* M, int n)
+{
     FILE* file = fopen(output, "wb");
 
     if (!file) {
