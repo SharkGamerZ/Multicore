@@ -15,6 +15,19 @@
 #define CHANNELS 3
 #define TILE_WIDTH 16
 
+// Macro to check errors
+#define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
+inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true)
+{
+   if (code != cudaSuccess) 
+   {
+      fprintf(stderr,"GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
+      if (abort) exit(code);
+   }
+}
+
+
+
 
 void serialBlur					(unsigned char* rgb_image,unsigned char*blur_image, int rows, int cols, int bsize);
 __global__ void kernelBlur 		(unsigned char* d_rgb_image,unsigned char*d_blur_image, int rows, int cols, int bsize);
@@ -53,8 +66,12 @@ int main(int argc, char **argv)
 	// Image dimensions
 	int rows;
 	int cols;
-	
+	loadPPM(input_file, &cols, &rows); 
 
+
+    dim3 BlockSize(16, 16, 1);
+    dim3 BlockSizeShared(tileHalo, tileHalo, 1);
+	dim3 GridSize((cols+15)/16, (rows+15)/16, 1);
 
 
 	// Serial part
@@ -104,7 +121,7 @@ int main(int argc, char **argv)
 	//
 	//
 	//
-	if (true)
+	if (false)
 	{
 		// Timing variables
 		cudaEvent_t cudaStart, cudaStop;	
@@ -114,8 +131,7 @@ int main(int argc, char **argv)
 		cudaEventCreate(&cudaStop);
 
 
-	    dim3 BlockSize(16,16,1);
-		dim3 GridSize((cols+15)/16,(rows+15)/16,1);
+
 
 		// Declaring host RGB and blur images
 		unsigned char *h_rgb_image;
@@ -179,9 +195,6 @@ int main(int argc, char **argv)
 		cudaEventCreate(&cudaStop);
 
 
-	    dim3 BlockSize(tileHalo,tileHalo,1);
-		dim3 GridSize((cols+15)/16,(rows+15)/16,1);
-
 		// Declaring host RGB and blur images
 		unsigned char *h_rgb_image;
 		unsigned char *h_blur_image;
@@ -205,11 +218,11 @@ int main(int argc, char **argv)
 		cudaMalloc(&d_rgb_image,total_pixels*CHANNELS);
 		cudaMemcpy(d_rgb_image,h_rgb_image,total_pixels*CHANNELS,cudaMemcpyHostToDevice);
 		cudaMalloc(&d_blur_image,total_pixels*CHANNELS);
-
+		printf("blur image size = %d", total_pixels*CHANNELS);
 
 		// Executing code
 		cudaEventRecord(cudaStart);
-		sharedKernelBlur<<<GridSize,BlockSize>>>(d_rgb_image, d_blur_image, rows, cols, bsize, TILE_WIDTH);
+		sharedKernelBlur<<<GridSize, BlockSizeShared, ((tileHalo*tileHalo) * CHANNELS)>>>(d_rgb_image, d_blur_image, rows, cols, bsize, TILE_WIDTH);
 	    cudaEventRecord(cudaStop);
 
 	    cudaMemcpy(h_blur_image, d_blur_image, total_pixels*CHANNELS, cudaMemcpyDeviceToHost);
@@ -229,6 +242,9 @@ int main(int argc, char **argv)
 	    cudaFree(d_rgb_image);
 	    cudaFree(d_blur_image);
 	}
+
+
+	printf("%s\n",cudaGetErrorString(cudaGetLastError()));
 
 	return 0;
 }
@@ -272,7 +288,7 @@ __global__ 	void kernelBlur(unsigned char* d_rgb_image,unsigned char*d_blur_imag
 {
 	int c = threadIdx.x+blockIdx.x*blockDim.x;
 	int r = threadIdx.y+blockIdx.y*blockDim.y;
-	
+
 	if(c >= cols || r >= rows) return;
 
     unsigned int red  =0;
@@ -308,18 +324,20 @@ __global__ 	void sharedKernelBlur(unsigned char* d_rgb_image,unsigned char*d_blu
 {
 	extern __shared__ unsigned char ds_rgb_image[];
 
+	int bx = blockIdx.x;
+	int by = blockIdx.y;
 
-
-	int bx = blockIdx.x;  int by = blockIdx.y;
-	int tx = threadIdx.x; int ty = threadIdx.y;
+	int tx = threadIdx.x;
+	int ty = threadIdx.y;
 
 	int g_c = bx*(blockDim.x - 2*bsize) + tx - bsize;
 	int g_r = by*(blockDim.y - 2*bsize) + ty - bsize;
-	
+
+
 	int c = tx - bsize;
 	int r = ty - bsize;
 
-
+	// If the thread it's out of the image
 	if(g_c < 0 || g_c >= cols || g_r < 0 || g_r >= rows) return;
 
 	
@@ -334,13 +352,9 @@ __global__ 	void sharedKernelBlur(unsigned char* d_rgb_image,unsigned char*d_blu
 
     __syncthreads();
 
-    if(c == 0 && r == 0) printf("CI SONOO\n");
-
+    // If the thread it's in the halo
     if (c < 0 || c > (tileSize + 2*bsize) || r < 0 || r > (tileSize + 2*bsize)) return;
 
-    if(c == 0 && r == 0) printf("CI SONOO\n");
-
-    /*
     int curr_c;
 	int curr_r;
 
@@ -358,12 +372,29 @@ __global__ 	void sharedKernelBlur(unsigned char* d_rgb_image,unsigned char*d_blu
 			num++;
 		}
 	}
+	printf("num = %d\n", num);
+	
+
 	red /= num;
 	green /= num;
 	blue /= num;
+	return;
 	
 
-	d_blur_image[3*(g_c + g_r*cols)]	= ds_rgb_image[3*(ty*blockDim.x + tx)];
-    d_blur_image[3*(g_c + g_r*cols)+1]	= ds_rgb_image[3*(ty*blockDim.x + tx)+1];
-    d_blur_image[3*(g_c + g_r*cols)+2]	= ds_rgb_image[3*(ty*blockDim.x + tx)+2];*/
+	if(bx != 0 || by != 0) return;
+	__syncthreads();
+	printf("tx=%d ty=%d   mem=%d\n", tx, ty, 3*(g_c + g_r*cols));
+
+	if(tx != 0 || ty != 0) return;
+
+	printf("%d\n", red);
+
+	return;
+	d_blur_image[0] = red;
+
+	return;
+
+	d_blur_image[3*(g_c + g_r*cols)]	= red; //ds_rgb_image[3*(ty*blockDim.x + tx)];
+    d_blur_image[3*(g_c + g_r*cols)+1]	= green; //ds_rgb_image[3*(ty*blockDim.x + tx)+1];
+    d_blur_image[3*(g_c + g_r*cols)+2]	= blue; //ds_rgb_image[3*(ty*blockDim.x + tx)+2];
 }
