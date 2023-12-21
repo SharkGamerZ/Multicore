@@ -218,7 +218,6 @@ int main(int argc, char **argv)
 		cudaMalloc(&d_rgb_image,total_pixels*CHANNELS);
 		cudaMemcpy(d_rgb_image,h_rgb_image,total_pixels*CHANNELS,cudaMemcpyHostToDevice);
 		cudaMalloc(&d_blur_image,total_pixels*CHANNELS);
-		printf("blur image size = %d", total_pixels*CHANNELS);
 
 		// Executing code
 		cudaEventRecord(cudaStart);
@@ -291,12 +290,12 @@ __global__ 	void kernelBlur(unsigned char* d_rgb_image,unsigned char*d_blur_imag
 
 	if(c >= cols || r >= rows) return;
 
-    unsigned int red  =0;
-    unsigned int green=0;
-    unsigned int blue =0;
-    int num=0; 
+	unsigned int red  =0;
+	unsigned int green=0;
+	unsigned int blue =0;
+	int num=0; 
 
-    int curr_c;
+	int curr_c;
 	int curr_r;
 
 	for (int i = -bsize; i <= bsize; i++)
@@ -314,9 +313,9 @@ __global__ 	void kernelBlur(unsigned char* d_rgb_image,unsigned char*d_blur_imag
 	blue /= num;
 
 
-	d_blur_image[3*(c+r*cols)]	=red;
-    d_blur_image[3*(c+r*cols)+1]=green;
-    d_blur_image[3*(c+r*cols)+2]=blue;
+	d_blur_image[3*(c+r*cols)]		= red;
+	d_blur_image[3*(c+r*cols)+1]	= green;
+	d_blur_image[3*(c+r*cols)+2]	= blue;
 }
 
 
@@ -341,23 +340,23 @@ __global__ 	void sharedKernelBlur(unsigned char* d_rgb_image,unsigned char*d_blu
 	if(g_c < 0 || g_c >= cols || g_r < 0 || g_r >= rows) return;
 
 	
-    unsigned int red  	=	0;
-    unsigned int green	=	0;
-    unsigned int blue 	=	0;
-    int num=0; 
+	unsigned int red  	=	0;
+	unsigned int green	=	0;
+	unsigned int blue 	=	0;
+   int num=0; 
 
-    ds_rgb_image[3*(ty*blockDim.x + tx)] 		= d_rgb_image[(3*(g_c + g_r*cols))];
-    ds_rgb_image[3*(ty*blockDim.x + tx) + 1] 	= d_rgb_image[(3*(g_c + g_r*cols)) + 1];
-    ds_rgb_image[3*(ty*blockDim.x + tx) + 2] 	= d_rgb_image[(3*(g_c + g_r*cols)) + 2];
+	ds_rgb_image[3*(ty*blockDim.x + tx)] 		= d_rgb_image[(3*(g_c + g_r*cols))];
+	ds_rgb_image[3*(ty*blockDim.x + tx) + 1] 	= d_rgb_image[(3*(g_c + g_r*cols)) + 1];
+	ds_rgb_image[3*(ty*blockDim.x + tx) + 2] 	= d_rgb_image[(3*(g_c + g_r*cols)) + 2];
 
-    __syncthreads();
+	__syncthreads();
+	// If the thread it's in the halo
+	if (c < 0 || c > (tileSize + 2*bsize) || r < 0 || r > (tileSize + 2*bsize)) return;
 
-    // If the thread it's in the halo
-    if (c < 0 || c > (tileSize + 2*bsize) || r < 0 || r > (tileSize + 2*bsize)) return;
-
-    int curr_c;
+	int curr_c;
 	int curr_r;
 
+	if((bx != 0 || by != 0) && (tx != 0 || ty != 0)) return;
     
 	for (int i = -bsize; i <= bsize; i++) {
 		for (int j = -bsize; j <= bsize; j++) {
@@ -369,32 +368,29 @@ __global__ 	void sharedKernelBlur(unsigned char* d_rgb_image,unsigned char*d_blu
 			green += ds_rgb_image[3*((ty + j)*blockDim.x + (tx + i)) + 1];
 			blue  += ds_rgb_image[3*((ty + j)*blockDim.x + (tx + i)) + 2];
 
+			printf("i=%d j=%d red=%d\n", i, j, red);
+
 			num++;
 		}
 	}
-	printf("num = %d\n", num);
 	
+	printf("uscito\n");
+   
 
 	red /= num;
 	green /= num;
 	blue /= num;
-	return;
 	
-
-	if(bx != 0 || by != 0) return;
-	__syncthreads();
 	printf("tx=%d ty=%d   mem=%d\n", tx, ty, 3*(g_c + g_r*cols));
 
-	if(tx != 0 || ty != 0) return;
-
 	printf("%d\n", red);
-
 	return;
+
 	d_blur_image[0] = red;
 
 	return;
 
-	d_blur_image[3*(g_c + g_r*cols)]	= red; //ds_rgb_image[3*(ty*blockDim.x + tx)];
-    d_blur_image[3*(g_c + g_r*cols)+1]	= green; //ds_rgb_image[3*(ty*blockDim.x + tx)+1];
-    d_blur_image[3*(g_c + g_r*cols)+2]	= blue; //ds_rgb_image[3*(ty*blockDim.x + tx)+2];
+	d_blur_image[3*(g_c + g_r*cols)]		= red; 	//ds_rgb_image[3*(ty*blockDim.x + tx)];
+	d_blur_image[3*(g_c + g_r*cols)+1]	= green; //ds_rgb_image[3*(ty*blockDim.x + tx)+1];
+	d_blur_image[3*(g_c + g_r*cols)+2]	= blue; 	//ds_rgb_image[3*(ty*blockDim.x + tx)+2];
 }
